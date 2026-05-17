@@ -18,6 +18,14 @@ func updateAnimation(mob):
 	elif state == State.WALK:
 		if animationPlayer.current_animation != "walk_cycle":
 			animationPlayer.play("walk_cycle")
+			
+	elif state == State.HUNT or state == State.CHASE:
+		if animationPlayer.current_animation != "run_cycle":
+			animationPlayer.play("run_cycle")
+	elif state == State.FIGHT:
+		if animationPlayer.current_animation != "atk_cycle":
+			animationPlayer.play("atk_cycle")
+			
 	elif state == State.EAT:
 		if animationPlayer.current_animation != "eat_cycle":
 			animationPlayer.play("eat_cycle")
