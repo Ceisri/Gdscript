@@ -1,6 +1,7 @@
 extends Node
 
 onready var controller = $".."
+onready var aggro_node = $"../Aggro"
 
 const GRAVITY = 12
 const MOVE_SPEED = 2.0
@@ -53,24 +54,6 @@ func getNearestPrey(wolf):
 	return nearestPrey
 
 
-func update_aggro_decay(mob):
-
-	if Engine.get_physics_frames() % 32 == 0:
-
-		for aggro_target in mob.targets:
-
-			if is_instance_valid(aggro_target.target_entity):
-
-				var distance = mob.global_transform.origin.distance_to(
-					aggro_target.target_entity.global_transform.origin
-				)
-
-				if distance > AGGRO_DROP_DISTANCE:
-
-					aggro_target.aggro *= 0.9
-
-					if aggro_target.aggro < 1:
-						aggro_target.aggro = 0
 
 
 func get_highest_aggro_target_entity(mob):
@@ -147,7 +130,7 @@ func updateState(mob):
 				mob.set_meta("moveDirection",getRandomDirection())
 
 func updateMovement(mob):
-	update_aggro_decay(mob)
+	aggro_node.update_aggro_decay(mob)
 
 	var state = mob.get_meta("state")
 	var verticalVelocity = mob.get_meta("verticalVelocity")
@@ -333,3 +316,11 @@ func hunting(nutrition,mob):
 
 			else:
 				mob.set_meta("state",State.HUNT)
+
+
+
+
+
+
+
+
