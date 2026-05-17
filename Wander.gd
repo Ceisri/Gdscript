@@ -44,7 +44,7 @@ func rotate(mob):
 	if dir == Vector3.ZERO:
 		return
 
-	var target_pos = mob.global_transform.origin + (-dir)
+	var target_pos = mob.global_transform.origin + (dir)
 	target_pos.y = mob.global_transform.origin.y
 
 	var target_transform = mob.global_transform.looking_at(target_pos, Vector3.UP)

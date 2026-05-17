@@ -60,10 +60,6 @@ func spawn(scene,position = null,mobName = "",nutrition = 100,health = 100,finis
 	stats.health = health
 	stats.is_finished = finished
 
-	mob.set_meta("state",controller.State.IDLE)
-	mob.set_meta("moveDirection",controller.mov_node.getRandomDirection())
-	mob.set_meta("nutritionTimer",0.0)
-	mob.set_meta("verticalVelocity",0.0)
 
 	controller.add_child(mob)
 

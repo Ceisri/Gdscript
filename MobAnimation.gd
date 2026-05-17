@@ -1,39 +1,35 @@
 extends Node
 
 
-onready var controller = $".."
+onready var state_node = $".."
+
 
 func updateAnimation(mob):
-
-	var animationPlayer = mob.get_node("AnimationPlayer")
+	var animation_player = mob.get_node("AnimationPlayer")
 	var state = mob.get_meta("state")
 	var stats = mob.get_node("Stats")
 	var is_finished = stats.is_finished
-	var State = controller.State
+	match state:
+		"wander":
+				wanderAnimations(mob,animation_player)
+		"dying":
+			animation_player.play("die")
+		"dead":
+			animation_player.play("dead")
+
+
+
+
+func wanderAnimations(mob,animation_player):
+	if mob.is_in_group("Entity"):
+			if mob.is_in_group("Wolf"):
+				wolfAnimations(mob,animation_player)
+
+				
+
+func wolfAnimations(mob,animation_player):
+	if mob.has_meta("is_stopped") and mob.get_meta("is_stopped"):
+		animation_player.play("idle_cycle")
+	else:
+		animation_player.play("walk_cycle")
 	
-	
-	if state == State.IDLE:
-		if animationPlayer.current_animation != "idle_cycle":
-			animationPlayer.play("idle_cycle")
-	elif state == State.WALK:
-		if animationPlayer.current_animation != "walk_cycle":
-			animationPlayer.play("walk_cycle")
-			
-	elif state == State.HUNT or state == State.CHASE:
-		if animationPlayer.current_animation != "run_cycle":
-			animationPlayer.play("run_cycle")
-	elif state == State.FIGHT:
-		if animationPlayer.current_animation != "atk_cycle":
-			animationPlayer.play("atk_cycle")
-			
-	elif state == State.EAT:
-		if animationPlayer.current_animation != "eat_cycle":
-			animationPlayer.play("eat_cycle")
-	elif state == State.AIR:
-		if animationPlayer.current_animation != "air_cycle":
-			animationPlayer.play("air_cycle")
-	elif state == State.DEAD:
-		if !is_finished:
-			animationPlayer.play("die")
-		else:
-			animationPlayer.play("dead")

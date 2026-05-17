@@ -6,27 +6,23 @@ const MOVE_SPEED = 2.0
 const SPAWN_RANGE = 10.0
 const SAVE_PATH = "user://mobs.save"
 
-onready var mov_node = $MobMovement
-onready var anim_node = $MobAnimation
+onready var mov_node = $State
+onready var state_node = $State
 onready var spawn_node = $Spawner
 
 
-enum State {IDLE,WALK,EAT,AIR,DEAD,HUNT,FIGHT,CHASE}
 
 func _ready():
 	randomize()
 	loadData()
 
 func _process(delta):
-	if Engine.get_physics_frames() % 24 == 0:
+	if Engine.get_physics_frames() % 500 == 0:
 		saveData()
 	for mob in get_children():
 		if mob.is_in_group("Entity"):
-			updateNeeds(mob,delta)
-			mov_node.updateState(mob)
-			mov_node.updateGravity(mob,delta)
-			mov_node.updateMovement(mob)
-			anim_node.updateAnimation(mob)
+			state_node.stateMachine(mob)
+			$Gravity.gravity(mob)
 			updateLabel(mob)
 
 func _input(event):
@@ -38,22 +34,6 @@ func _input(event):
 		saveData()
 		spawn_node.spawn(WOLF_SCENE,null,"",100,randomHealth)
 
-
-func updateNeeds(mob, delta):
-	var stats = mob.get_node("Stats")
-	var nutrition = stats.nutrition
-	var nutritionTimer = mob.get_meta("nutritionTimer")
-	nutritionTimer += delta
-	if nutritionTimer >= 1.0:
-		nutritionTimer = 0.0
-		var state = mob.get_meta("state")
-		if state == State.WALK:
-			nutrition -= 1
-		elif state == State.EAT:
-			nutrition += 1
-		nutrition = clamp(nutrition,0,100)
-		stats.nutrition = nutrition
-	mob.set_meta("nutritionTimer",nutritionTimer)
 
 
 
@@ -92,16 +72,9 @@ func saveData():
 
 					aggro_data.append({
 						"target_name": aggro_target.target_entity.save_id,
-						"aggro": aggro_target.aggro
-					})
+						"aggro": aggro_target.aggro})
 
-					print(
-						mob.name,
-						" saving ",
-						aggro_target.aggro,
-						" -> ",
-						aggro_target.target_entity.save_id
-					)
+					#print(mob.name," saving ",aggro_target.aggro," -> ",aggro_target.target_entity.save_id)
 
 			mobsData.append({
 				"scene": mob.filename,
