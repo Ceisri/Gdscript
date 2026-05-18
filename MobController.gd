@@ -2,6 +2,7 @@ extends Spatial
 
 const HORSE_SCENE = preload("res://world/horse/horse.tscn")
 const WOLF_SCENE = preload("res://world/horse/placeholder.tscn")
+const SPIDER_SCENE = preload("res://world/spider/spider.tscn")
 const MOVE_SPEED = 2.0
 const SPAWN_RANGE = 10.0
 const SAVE_PATH = "user://mobs.save"
@@ -17,7 +18,7 @@ func _ready():
 	loadData()
 
 func _process(delta):
-	if Engine.get_physics_frames() % 500 == 0:
+	if Engine.get_physics_frames() % 900 == 0:
 		saveData()
 	for mob in get_children():
 		if mob.is_in_group("Entity"):
@@ -33,6 +34,9 @@ func _input(event):
 	if event.is_action_pressed("add2"):
 		saveData()
 		spawn_node.spawn(WOLF_SCENE,null,"",100,randomHealth)
+	if event.is_action_pressed("add3"):
+		saveData()
+		spawn_node.spawn(SPIDER_SCENE,null,"",100,randomHealth)
 
 
 

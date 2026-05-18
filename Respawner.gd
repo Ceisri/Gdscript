@@ -60,7 +60,7 @@ func spawn(scene,position = null,mobName = "",nutrition = 100,health = 100,finis
 	stats.health = health
 	stats.is_finished = finished
 
-
+	mob.set_meta("state","wander")
 	controller.add_child(mob)
 
 	return mob
