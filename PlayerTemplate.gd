@@ -61,7 +61,6 @@ func _ready():
 		child.get_node("Slot").loadData()
 
 	direction=Vector3.BACK.rotated(Vector3.UP,$Camroot/h.global_transform.basis.get_euler().y)
-	matchBasetATKtoWeaponType()
 
 
 var interrupt_groups = {
@@ -118,7 +117,6 @@ var anim_locks = { #This becomes faster and more modular and automatic if all an
 	"cleave_con":false,
 	"battlecry":false,
 	"dash":false,
-	"jump":false,
 	"stop_run":false,
 	"parry":false,
 	"sit":false,
@@ -128,9 +126,6 @@ var anim_locks = { #This becomes faster and more modular and automatic if all an
 	"prepare":false,
 	"staggered":false}
 var current_skill:String = "none"
-onready var atk1 = animation_tree.tree_root.get_node("BaseATK1")
-onready var atk2 = animation_tree.tree_root.get_node("BaseATK2")
-onready var atk3 = animation_tree.tree_root.get_node("BaseATK3")
 
 enum WeaponMode {
 	NONE,
@@ -142,35 +137,17 @@ enum WeaponMode {
 
 var weapons:int = WeaponMode.NONE
 
-func matchBasetATKtoWeaponType():
-	match weapons:
-		WeaponMode.NONE:
-			atk1.animation = "punch1"
-			atk2.animation = "punch2"
-			atk3.animation = "punch3"
 
-		WeaponMode.SWORD:
-			atk1.animation = "1h_Baseatk1"
-			atk2.animation = "1h_Baseatk2"
-			atk3.animation = "1h_Baseatk3"
-
-		WeaponMode.DUAL:
-			atk1.animation = "1h_Baseatk1"
-			atk2.animation = "1h_Baseatk2"
-			atk3.animation = "1h_Baseatk3"
-
-		WeaponMode.SHIELD:
-			atk1.animation = "1h_Baseatk1"
-			atk2.animation = "1h_Baseatk2"
-			atk3.animation = "1h_Baseatk3"
-
-		WeaponMode.TWO_HANDED:
-			atk1.animation = "2h_Baseatk1"
-			atk2.animation = "2h_Baseatk2"
-			atk3.animation = "2h_Baseatk3"
 
 
 var skill_animations = {
+	"base attack":{
+		WeaponMode.NONE:["punch1","punch2","punch3"],
+		WeaponMode.SWORD:["1h_Baseatk1","1h_Baseatk2","1h_Baseatk3"],
+		WeaponMode.DUAL:["1h_Baseatk1","1h_Baseatk2","1h_Baseatk3"],
+		WeaponMode.SHIELD:["1h_Baseatk1","1h_Baseatk2","1h_Baseatk3"],
+		WeaponMode.TWO_HANDED:["2h_Baseatk1","2h_Baseatk2","2h_Baseatk3"],
+	},
 	"section":{
 		WeaponMode.NONE:"1h_OverheadStrike",
 		WeaponMode.SWORD:"1h_OverheadStrike",
@@ -180,7 +157,7 @@ var skill_animations = {
 	},
 	"perforation trifecta":{
 		WeaponMode.NONE:"1h_PerforactionTrifecta",
-#		WeaponMode.SWORD:"1h_PerforactionTrifecta",
+		WeaponMode.SWORD:"1h_PerforactionTrifecta",
 		WeaponMode.DUAL:"1h_PerforactionTrifecta",
 		WeaponMode.SHIELD:"1h_PerforactionTrifecta",
 		WeaponMode.TWO_HANDED:"1h_PerforactionTrifecta",
@@ -192,6 +169,13 @@ var skill_animations = {
 		WeaponMode.SHIELD:"1h_Slice",
 		WeaponMode.TWO_HANDED:"1h_Slice",
 	},
+	"parry":{
+		WeaponMode.NONE:"ALL_SwordGuard_cycle",
+		WeaponMode.SWORD:"ALL_SwordGuard_cycle",
+		WeaponMode.DUAL:"ALL_SwordGuard_cycle",
+		WeaponMode.SHIELD:"ALL_SwordGuard_cycle",
+		WeaponMode.TWO_HANDED:"ALL_SwordGuard_cycle",
+	}, 
 }
 
 var last_skill_animation=""
@@ -232,7 +216,18 @@ func setSkillAnimation(skill_name:String)->void:
 
 		# Weapon mode supported.
 		# Fetch the assigned animation.
-		new_anim=skill_data[weapons]
+		if skill_name=="base attack":
+
+			var combo_anims=skill_data[weapons]
+
+			match combo_sequence:
+				1:new_anim=combo_anims[0]
+				2:new_anim=combo_anims[1]
+				3:new_anim=combo_anims[2]
+				_:new_anim=combo_anims[0]
+
+		else:
+			new_anim=skill_data[weapons]
 
 	else:
 
@@ -308,56 +303,117 @@ var crouch_blend := 1.0
 var crouch_mode_blend := 0.0
 var climb_blend := 0.0
 var water_blend := 0.0
-var melee_skill_blend := -1.0
 
+var anim_blend_cache := {}
+
+# ------------------------------------------------------------
+# setAnimBlend
+# Smooths any AnimationTree blend parameter using per-path
+# cached interpolation instead of overwriting values directly.
+#
+# This prevents flickering caused by competing writes from
+# different animation states in the same frame.
+#
+# Parameters:
+# - path: AnimationTree parameter path
+# - target: desired blend value (-1 to 1 or 0 to 1 depending on node)
+# - speed: interpolation strength (higher = snappier, lower = smoother)
+# - delta: frame delta time
+# ------------------------------------------------------------
+func setAnimBlend(path:String, target:float, speed:float, delta:float)->void:
+	var current := 0.0
+
+	if anim_blend_cache.has(path):
+		current = anim_blend_cache[path]
+
+	current = move_toward(current, target, delta * speed)
+	anim_blend_cache[path] = current
+
+	animation_tree.set(path, current)
+
+
+# ------------------------------------------------------------
+# animationOrder
+#
+# Central animation state resolver.
+#
+# Handles:
+# - Combat vs movement blending
+# - Skill activation blending
+# - Base attack combo sequencing
+# - Movement state transitions
+#
+# Base attack behavior:
+# - Treated as a 3-step combo sequence
+# - combo_sequence (1 → 2 → 3) selects which animation slot
+#   inside the Base Attack skill animation list is played
+# - All transitions between combo steps are driven by
+#   AnimationTree blend parameter "BaseATKSwitch"
+# - Attack speed scales playback via SkillTimeScale
+#
+# Smoothing control:
+# - Combat and movement use separate interpolation speeds
+# - Increasing speed = more responsive but sharper transitions
+# - Lower speed = smoother but more delayed transitions
+# ------------------------------------------------------------
 func animationOrder()->void:
 	animation_tree.active = true
+
 	var delta := get_process_delta_time()
 	var active_lock := get_active_anim_lock()
-	if active_lock == "parry":
-		attack_defend_switch = move_toward(attack_defend_switch,1.0,delta * 10.0)
-		melee_skill_blend = move_toward(melee_skill_blend,0.0,delta * 10.0)
-		animation_tree.set("parameters/AttackOrDefend/blend_amount",attack_defend_switch)
-		animation_tree.set("parameters/MeleeSkillSwitch/blend_amount",melee_skill_blend)
-		animation_tree.set("parameters/CombatSwitch/active",true)
-	elif active_lock != "" and skill_animations.has(active_lock):
+
+	# --------------------------------------------------------
+	# COMBAT / SKILL STATE
+	# --------------------------------------------------------
+	if active_lock != "" and skill_animations.has(active_lock):
+
 		setSkillAnimation(active_lock)
 
-		attack_defend_switch = 0
-		combat_blend = 1.0
-		melee_skill_blend = 1.0
+		# Enter combat state smoothly
+		setAnimBlend("parameters/CombatSwitch/blend_amount", 1.0, 10.0, delta)
+		setAnimBlend("parameters/MeleeSkillSwitch/blend_amount", 1.0, 10.0, delta)
 
-		animation_tree.set("parameters/AttackOrDefend/blend_amount",attack_defend_switch)
-		animation_tree.set("parameters/CombatSwitch/active",true)
-		animation_tree.set("parameters/MeleeSkillSwitch/blend_amount",melee_skill_blend)
+		# ----------------------------------------------------
+		# BASE ATTACK COMBO SYSTEM
+		# ----------------------------------------------------
+		# Base attack is a chained sequence of 3 animations:
+		#
+		# combo_sequence = 1 → first attack animation
+		# combo_sequence = 2 → second attack animation
+		# combo_sequence = 3 → finisher attack animation
+		#
+		# The AnimationTree uses a BlendSpace/StateSwitch node
+		# ("BaseATKSwitch") to transition between these phases.
+		#
+		# This value should NOT snap instantly in gameplay logic;
+		# instead it is smoothed here to avoid visual stepping.
+		#
+		if active_lock == "base attack":
+			animation_tree.set("parameters/SkillTimeScale/scale",stats.derived_stats["attack_speed"])
 
-	elif active_lock == "base attack":
-		attack_defend_switch = 0
-		animation_tree.set("parameters/AttackOrDefend/blend_amount",attack_defend_switch)
+			var combo_target := 0.0
 
-		melee_skill_blend = 0
-		animation_tree.set("parameters/MeleeSkillSwitch/blend_amount",melee_skill_blend)
+			match combo_sequence:
+				1: combo_target = -1.0
+				2: combo_target = 0.0
+				3: combo_target = 1.0
 
-		var target := -1.0
-
-		animation_tree.set("parameters/BaseATK1Time/scale",stats.derived_stats["attack_speed"])
-
-		if combo_sequence == 3 and combo_timer > 0:
-			target = 1.0
-			animation_tree.set("parameters/BaseATK3Time/scale",stats.derived_stats["attack_speed"])
-		elif combo_sequence == 2 and combo_timer > 0:
-			target = 0.0
-
-		combat_blend = target
-
-		animation_tree.set("parameters/CombatSwitch/active",true)
-		animation_tree.set("parameters/BaseATKSwitch/blend_amount",combat_blend)
+			# Separate smoothing control for combo transitions
+			# Lower speed = heavier, slower-feeling combo chaining
+			# Higher speed = snappy responsive combos
+			setAnimBlend("parameters/BaseATKSwitch/blend_amount", combo_target,8, delta)
 
 	else:
+		# Exit combat state smoothly
+		setAnimBlend("parameters/CombatSwitch/blend_amount", 0.0, 10.0, delta)
+		setAnimBlend("parameters/MeleeSkillSwitch/blend_amount", 0.0, 10.0, delta)
+
+		# --------------------------------------------------------
+		# MOVEMENT TARGET STATE RESOLUTION
+		# --------------------------------------------------------
 		var movement_target := -1.0
 		var movement_type_target := 0.0
 		var vertical_target := 0.0
-
 		var crouch_target := 1.0
 		var crouch_mode_target := 0.0
 		var climb_target := 0.0
@@ -371,6 +427,11 @@ func animationOrder()->void:
 				"idle":
 					if !Input.is_action_just_pressed("click") or !Input.is_action_pressed("click") or current_skill == "none" or current_skill == "":
 						movement_target = -1.0
+
+						if is_in_combat:
+							setAnimBlend("parameters/IsInCombat/blend_amount", 1.0, 10.0, delta)
+						else:
+							setAnimBlend("parameters/IsInCombat/blend_amount", 0.0, 10.0, delta)
 
 				"walk":
 					movement_target = 0.0
@@ -404,29 +465,17 @@ func animationOrder()->void:
 					movement_type_target = -1.0
 					water_target = 0.0
 
-		animation_tree.set("parameters/CombatSwitch/active",false)
+		# --------------------------------------------------------
+		# MOVEMENT BLENDING (all interpolated)
+		# --------------------------------------------------------
+		setAnimBlend("parameters/Movement/blend_amount", movement_target, 8.0, delta)
+		setAnimBlend("parameters/MovementType/blend_amount", movement_type_target, 8.0, delta)
+		setAnimBlend("parameters/Vertical/blend_amount", vertical_target, 8.0, delta)
 
-		combat_blend = -1
-
-		movement_blend = move_toward(movement_blend,movement_target,delta * 8.0)
-		movement_type_blend = move_toward(movement_type_blend,movement_type_target,delta * 8.0)
-		vertical_blend = move_toward(vertical_blend,vertical_target,delta * 8.0)
-
-		crouch_blend = move_toward(crouch_blend,crouch_target,delta * 8.0)
-		crouch_mode_blend = move_toward(crouch_mode_blend,crouch_mode_target,delta * 8.0)
-		climb_blend = move_toward(climb_blend,climb_target,delta * 8.0)
-		water_blend = move_toward(water_blend,water_target,delta * 8.0)
-
-		animation_tree.set("parameters/Movement/blend_amount",movement_blend)
-		animation_tree.set("parameters/MovementType/blend_amount",movement_type_blend)
-		animation_tree.set("parameters/Vertical/blend_amount",vertical_blend)
-
-		animation_tree.set("parameters/CrouchOrNot/blend_amount",crouch_blend)
-		animation_tree.set("parameters/CrouchMode/blend_amount",crouch_mode_blend)
-		animation_tree.set("parameters/climbPoint/blend_amount",climb_blend)
-		animation_tree.set("parameters/Water/blend_amount",water_blend)
-
-
+		setAnimBlend("parameters/CrouchOrNot/blend_amount", crouch_target, 8.0, delta)
+		setAnimBlend("parameters/CrouchMode/blend_amount", crouch_mode_target, 8.0, delta)
+		setAnimBlend("parameters/climbPoint/blend_amount", climb_target, 8.0, delta)
+		setAnimBlend("parameters/Water/blend_amount", water_target, 8.0, delta)
 
 
 var combo_sequence:int = 1
@@ -434,6 +483,9 @@ var combo_timer:float = 60.0
 func combatInputs()->void:
 	if anim_locks["base attack"] == false:
 		combo_timer = max(combo_timer - 1.0, 0.0)
+	if anim_locks["parry"] == true:
+		guarding = true
+		
 
 export var root_motion_scale:float = 0.01
 func rootMotion(delta)->void:
@@ -478,10 +530,52 @@ func physics(delta):
 	move_and_slide(movement, Vector3.UP)
 
 
+func _process(delta):
+	animationOrder()
+
 func _physics_process(delta):
+
 	if Input.is_action_just_pressed("0"):
 		$character/root/Skeleton/Mesh.visible = !$character/root/Skeleton/Mesh.visible
-	$Label.text = str(current_skill) + " / " + "combo timer" + str(combo_timer)+ " / " + "combo seq" + str(combo_sequence)+ " / " + " " + str(movement_mode) + " vertical=" + str(animation_tree.get("parameters/Vertical/blend_amount"))+ "  movement type" + str(animation_tree.get("parameters/MovementType/blend_amount"))
+	$Label.text = """
+active_lock=%s
+current_skill=%s
+
+base_attack=%s
+cleave=%s
+section=%s
+perforation=%s
+parry=%s
+
+combo_seq=%s
+combo_timer=%s
+
+CombatSwitch=%s
+MeleeSkillSwitch=%s
+BaseATKSwitch=%s
+
+movement_mode=%s
+current_anim=%s
+""" % [
+	get_active_anim_lock(),
+	current_skill,
+
+	anim_locks["base attack"],
+	anim_locks["cleave"],
+	anim_locks["section"],
+	anim_locks["perforation trifecta"],
+	anim_locks["parry"],
+
+	combo_sequence,
+	combo_timer,
+
+	animation_tree.get("parameters/CombatSwitch/blend_amount"),
+	animation_tree.get("parameters/MeleeSkillSwitch/blend_amount"),
+	animation_tree.get("parameters/BaseATKSwitch/blend_amount"),
+
+	movement_mode,
+	animation.current_animation
+]
 	if stored_body != null:
 		is_in_combat = true
 	rootMotion(delta)
@@ -493,10 +587,9 @@ func _physics_process(delta):
 	if cursor_visible == false:
 		combatInputs()
 		dash()
-		
+
 	if !movement_mode == "idle":
 		loot.closeLoot()
-	animationOrder()
 	if Input.is_action_just_pressed("entity_debug"):
 		$UI/CrossairInspect/Debug.visible = !$UI/CrossairInspect/Debug.visible 
 	if Input.is_action_just_pressed("character"):
@@ -544,20 +637,37 @@ func collisionShapesManager()->void:
 	fullbody_collision.disabled=crouching
 	upper_body_collision.disabled=crouching
 	lower_body_collision.disabled=!crouching
-
+	
+var movement_unlock_locks = [
+	"parry",
+]
+func clearMovementLocks()->void:
+	for lock_name in movement_unlock_locks:
+		if anim_locks.has(lock_name):
+			anim_locks[lock_name] = false
 func movement(delta) -> void:
+	# ==================================================
+	# TURN SPEED HANDLING (combat overrides)
+	# ==================================================
 	effective_turn_speed = base_turn_speed
 
+	# Attacking or guarding slows turn rate (or dash modifies it)
 	if guarding or attacking:
 		effective_turn_speed = stats.derived_stats["atk_turn_speed"] if !is_dashing else base_turn_speed * stats.derived_stats["dash_turn_speed"]
 	elif is_dashing:
 		effective_turn_speed = base_turn_speed * stats.derived_stats["dash_turn_speed"] * 20
 
+	# ==================================================
+	# RESET / INITIAL STATE
+	# ==================================================
 	previous_movement_mode = movement_mode
 	movement_mode = "idle"
 
 	var input_direction = Vector3.ZERO
 
+	# ==================================================
+	# INPUT COLLECTION
+	# ==================================================
 	if can_move or !guarding:
 		if Input.is_action_pressed("left") and !is_climbing:
 			input_direction.x += 1
@@ -573,16 +683,34 @@ func movement(delta) -> void:
 	var crouching = Input.is_action_pressed("crouch")
 	var sprinting = Input.is_action_pressed("sprint") and !crouching
 
-	if anim_locks["stop_run"] and movement_input:
-		activateAnimLock("stop_run")
+	# ==================================================
+	# INPUT-BASED ANIM LOCK CLEAR (requested change)
+	# ==================================================
+	if movement_input:
+		# movement cancels these locks immediately
+		clearMovementLocks()
 
+
+	# ==================================================
+	# STOP RUN TRIGGER LOGIC
+	# ==================================================
+#	if anim_locks["stop_run"] and movement_input:
+#		activateAnimLock("stop_run")
+
+	# ==================================================
+	# GLOBAL LOCK CHECK (prevents movement override)
+	# ==================================================
 	var locked = false
 	for anim_name in anim_locks.keys():
-		if anim_name != "jump" and anim_name != "stop_run" and anim_locks[anim_name]:
+		if anim_name != "stop_run" and anim_locks[anim_name]:
 			locked = true
 			break
 
+	# ==================================================
+	# CAMERA-RELATIVE DIRECTION
+	# ==================================================
 	var h_rot = camera_v.global_transform.basis.get_euler().y
+
 	movement_speed = 0
 	moving = false
 
@@ -591,6 +719,9 @@ func movement(delta) -> void:
 	else:
 		direction = Vector3.ZERO
 
+	# ==================================================
+	# MOVEMENT STATE MACHINE
+	# ==================================================
 	if !locked:
 		if direction != Vector3.ZERO:
 			moving = true
@@ -598,15 +729,19 @@ func movement(delta) -> void:
 			if crouching:
 				movement_mode = "crouch_moving"
 				movement_speed = walk_speed * 0.5
+
 			elif sprinting:
 				movement_speed = stats.derived_stats["run_speed"]
 				movement_mode = "run"
+
 			else:
 				movement_mode = "walk"
 				movement_speed = walk_speed
 
+				# leaving sprint triggers stop_run lock
 				if previous_movement_mode == "run":
 					anim_locks["stop_run"] = true
+
 		else:
 			if crouching:
 				movement_mode = "crouch_idle"
@@ -615,34 +750,44 @@ func movement(delta) -> void:
 
 			if previous_movement_mode == "run":
 				anim_locks["stop_run"] = true
+
 	else:
 		moving = false
 		movement_mode = "idle"
 		movement_speed = 0
 
+	# ==================================================
+	# MOVEMENT MODIFIERS
+	# ==================================================
 	if is_carrying:
 		movement_speed *= 0.7
+
 	if is_in_combat:
 		movement_speed *= 0.65
+
 	if attacking:
 		movement_speed *= 0.38
 
-	# WATER OVERRIDE
+	# ==================================================
+	# WATER OVERRIDE STATE
+	# ==================================================
 	if is_in_water:
 		if moving:
 			movement_mode = "swimming"
 		else:
 			movement_mode = "treading water"
 
+	# ==================================================
+	# ROTATION HANDLING
+	# ==================================================
 	if !is_rotation_locked():
 		if !is_climbing and direction != Vector3.ZERO and (!is_on_wall()
-			or (climb_ray.is_colliding() and climb_ray.get_collider().is_in_group("Entity") or left_ray.is_colliding() or right_ray.is_colliding())):
+			or (climb_ray.is_colliding() and climb_ray.get_collider().is_in_group("Entity")
+			or left_ray.is_colliding() or right_ray.is_colliding())):
 
 			var target_rot = atan2(direction.x, direction.z) - rotation.y
 			player_mesh.rotation.y = lerp_angle(player_mesh.rotation.y, target_rot, delta * angular_acceleration)
 			turnable.rotation.y = lerp_angle(turnable.rotation.y, target_rot, delta * angular_acceleration)
-
-
 
 var is_dashing:bool = false
 var dash_timer:float = 0.0
@@ -791,7 +936,6 @@ func jump()->void:
 		if Input.is_action_just_pressed("jump") and is_on_floor():
 			vertical_velocity = Vector3.UP * stats.derived_stats["jump_power"]
 			unlockAnim()
-			anim_locks["jump"] = true
 			attacking = false
 			guarding =false
 
@@ -814,6 +958,7 @@ export var fall_damage_multiplier := 2.0
 func checkFall():
 	if is_airborne and !is_climbing:
 		movement_mode = "fall"
+		
 	var on_floor = is_on_floor()
 	# Left ground
 	if was_on_floor and !on_floor:

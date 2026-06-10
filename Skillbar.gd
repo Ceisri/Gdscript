@@ -11,7 +11,7 @@ var active_cooldowns = {}
 var edit = false
 var capture_slot = null
 var expand_state = 0
-var mouse_repeat_frames:int=6
+var mouse_repeat_frames:int=16
 var mouse_repeat_counter={}
 var no_press_tween_skills=["base attack", "parry"]
 
@@ -98,7 +98,6 @@ func createDefaultSlots()->void:
 func _physics_process(delta)->void:
 	updateCooldowns(delta)
 	if player.cursor_visible == false:
-		skillBarInputs()
 		matchInputSlot()
 func setSlotVisible(holder,state:bool)->void:
 	holder.modulate.a=1.0 if state else 0.0
@@ -240,10 +239,11 @@ func skills(slot)->void:
 		else:
 			# any skill can interrupt base attack
 			player.anim_locks["base attack"]=false
-
+		
 		animationcalls.unlockAnim()
 		player.anim_locks[skill]=true
 		player.current_skill=skill
+		player.combat_timer = 10
 
 		# --------------------------------------------------
 		# APPLY COOLDOWN
@@ -253,6 +253,7 @@ func skills(slot)->void:
 		cooldown/=max(.01,player.stats.derived_stats["cooldown_reduction"])
 		active_cooldowns[path]=cooldown
 		return
+
 
 
 
@@ -332,8 +333,6 @@ func matchInputSlot()->void:#calls skills based on slot and assigned key
 
 
 
-func skillBarInputs()->void:
-	pass
 func slotPressed(holder)->void:
 	if !edit:
 		return
