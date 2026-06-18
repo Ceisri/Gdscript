@@ -13,139 +13,76 @@ var can_comboB:bool=false
 var can_comboC:bool=false
 var locked:bool=false
 
+"""
+combo_atk()->void stops the combo attack animation
+call this for press to attack otherwise the player needs to hold on the combo attack
+button to keep doing base attacks, there's a modality to switch between the two
+but for the people that want to do press to attack instead of hold to attack this is needed
+call it at the end of every hit in the combo attack animation, during the recovery frames
+"""
 
 
-func dealDMG():
+func combo_atk()->void:
+	$"../UI/Skillbar".continue_combo_atk = false
+	$"../UI/Skillbar".consumeCombo()
+
+
+
+
+func dealDMG()->void:
 	stats.dealDamage()
 
+func applyBuff()->void:
+	stats.selfBuff()
 
-func combo1():
-	parent.combo_sequence = 2
-	parent.combo_timer = 30
-	unlockAnim()
-func combo2():
-	parent.combo_sequence = 3
-	parent.combo_timer = 30
-	unlockAnim()
-func combo3():
-	parent.combo_sequence = 1
-	parent.combo_timer = 0
-	unlockAnim()
+var speed_up_combos = {
+	"stone splitter": false,
+	"placeholder": false,
+}
+var speed_up_combo_until = {}
+func speedUPtheNextATK(selected_atk:String):
+	speed_up_combo_until[selected_atk] = OS.get_ticks_msec() / 1000.0 + 4.0
+
+var BerserkComboTimer:float = 2
+func BerserkBasicCombo():
+	var selected_atk:String = "stone splitter"
+	speed_up_combo_until[selected_atk] = OS.get_ticks_msec() / 1000.0 + BerserkComboTimer
+
+
+
+func flipDirection()->void:
+	parent.direction = -parent.direction
+	parent.player_mesh.rotation.y += PI
+	parent.turnable.rotation.y += PI
+
 	
+func disableCollisions()->void:
+	for body in get_tree().get_nodes_in_group("Entity"):
+		if body == parent:
+			continue
+		parent.add_collision_exception_with(body)
+		body.add_collision_exception_with(parent)
+func enableCollisions()->void:
+	for body in get_tree().get_nodes_in_group("Entity"):
+		if body == parent:
+			continue
+		parent.remove_collision_exception_with(body)
+		body.remove_collision_exception_with(parent)
+
+
 	
-func resetCombo():
-	parent.can_base_atk3 = false
-	parent.can_base_atk2 = false
-	
 
 
-func lockMov():
-	parent.can_move = false
-
-func canMove():
-	parent.can_move = true
 
 func unlockAnim():
-	for key in parent.anim_locks:
-		parent.anim_locks[key] = false
-		parent.current_skill = "none"
+	speed_up_combo_until.erase(parent.current_skill)
+	if parent.current_skill != "combo attack":
+		for key in parent.anim_locks:
+			parent.anim_locks[key] = false
+			parent.current_skill = "none"
+			parent.last_active_skill = ""
+			parent.animation_tree.active = false
 
-
-func baseATKseq():
-	if parent.atk_seq == 0:
-		parent.atk_seq += 1
-	else:
-		parent.atk_seq = 0
-
-
-
-
-func cleave1stpart():
-	parent.can_cleav_cont = true
-	timer.start()
-
-func _on_cleave_timeout():
-	parent.can_cleav_cont = false
-	print(parent.can_cleav_cont)
-	timer.stop()
-	
-	
-func cleavecontend():
-	parent.can_cleav_cont = false
-
-func excecutespell()->void:
-	var skill = parent.combat.current_cast_skill
-
-	if skill == "":
-		return
-
-	if !MobSkills.isAttack(skill):
-		return
-
-	var damage = MobSkills.getDamage(skill)
-
-	for body in parent.dmg_area.get_overlapping_bodies():
-		if body == parent:
-			continue
-
-		if body.has_method("getHit"):
-			body.getHit(parent,damage)
-
-			if MobSkills.isStun(skill):
-				pass
-
-			if MobSkills.isLifesteal(skill):
-				var heal = damage * MobSkills.getLifestealPower(skill)
-
-				parent.stats.health += heal
-			
-			if MobSkills.isCooldownReduce(skill):
-				var reduction = MobSkills.getCooldownReducePower(skill)
-
-				for cd_skill in parent.combat.active_cooldowns.keys():
-					parent.combat.active_cooldowns[cd_skill] *= (1.0 - reduction)
-
-					if parent.combat.active_cooldowns[cd_skill] <= 0:
-						parent.combat.active_cooldowns.erase(cd_skill)
-
-var dash_power = 0.0
-var dash_direction = Vector3.ZERO
-
-func dashForward(dash_distance: float = 3) -> void:
-	parent.propulsion(dash_distance)
-	
-	
-func updateDash(power:float):
-	var step = dash_direction * power * get_physics_process_delta_time()
-
-	parent.move_and_collide(step)
-
-	pushTarget(power)
-
-func pushTarget(power:float):
-	for body in parent.dmg_area.get_overlapping_bodies():
-		if body == parent:
-			continue
-
-		if body is KinematicBody:
-			if body.has_node("Stats"):
-				var stats = body.stats
-
-				if stats and "can_be_moved" in stats:
-					if !stats.can_be_moved:
-						continue
-
-			var push_dir = (
-				body.global_transform.origin
-				- parent.global_transform.origin
-			).normalized()
-
-			push_dir.y = 0
-
-			body.move_and_slide(push_dir * power * 6.0)
-
-func die()->void:
-	parent.is_dead = true
 
 
 

@@ -3,334 +3,610 @@ extends Control
 onready var player = $"../.."
 onready var character_ui =  $"../Menu/CharacterBar"
 onready var animationcalls = $"../../AnimationCalls"
-onready var grid =  $GridContainer
-onready var grid2 = $GridContainer2 
+onready var anim_calls = $"../../AnimationCalls"
+onready var grid:GridContainer =  $GridContainer
+onready var grid2:GridContainer = $GridContainer2 
 onready var expand_button = $ExpandCollapse
+onready var inventory_grid: GridContainer = $"../Inventory/ScrollContainer/GridContainer"
+onready var inventory = $"../Inventory"
+onready var stats:Node = $"../../Stats"
+onready var tween: Tween = $Tween
+onready var tween2:Tween = $Tween2
+
 var skill_bar_input:String = ""
 var active_cooldowns = {}
 var edit = false
 var capture_slot = null
 var expand_state = 0
-var mouse_repeat_frames:int=16
 var mouse_repeat_counter={}
-var no_press_tween_skills=["base attack", "parry"]
 
-
+var no_press_tween_skills=["combo attack","guard"]
+var hold_skills={
+	"parry":true,
+	"guard":true,
+	"combo attack":true,
+	"obliteration charge":true,
+}
+var combo_queue:int= 0
+const COMBO_QUEUE_MAX :int= 2
+var combo_atk_mode_hold:bool = false #false = click to attack, true = hold to attack like taking down a tree in minecraft
+var continue_combo_atk:bool = true#this sets combo attack to true and the animation continenues till this is false, set it false in animaiton cals, saves time in Animation creation
 
 const CONFIG_FILE_PATH = "user://skillbar_keybinds.cfg"
 const ACTION_PREFIX = "skill_slot_"
 const ACTION_PREFIX2="mouse_slot_"
 
 
-func _ready()->void:
-	loadCooldowns()
+
+
+const SKILL_INIT_PASSES = 15
+func _ready():
 	loadKeybinds()
-
-	for holder in grid.get_children():
-		for c in holder.get_children():
-			if c is TextureButton:
-				c.connect("pressed",self,"slotPressed",[holder])
-				break
-
-	for holder in grid2.get_children():
-		for c in holder.get_children():
-			if c is TextureButton:
-				c.connect("pressed",self,"slotPressed",[holder])
-				break
-
-	expand_button.connect("pressed",self,"expandCollapse")
-	
-func createDefaultMouseSlots()->void:
-	var keys=["LM","RM"]
-	var base=grid2.get_node("ButtonHolder0")
-
-	for i in range(1,2):
-		if grid2.has_node("ButtonHolder"+str(i)):
-			continue
-
-		var b=base.duplicate()
-		b.name="ButtonHolder"+str(i)
-		grid2.add_child(b)
-		b.owner=self
-
-		for c in b.get_children():
-			if c is TextureButton:
-				c.connect("pressed",self,"slotPressed",[b])
-				break
-
-	for i in range(2):
-		var b=grid2.get_node("ButtonHolder"+str(i))
-
-		b.get_node("Key").text=keys[i]
-
-		if !InputMap.has_action(ACTION_PREFIX2+str(i)):
-			InputMap.add_action(ACTION_PREFIX2+str(i))
-
-		InputMap.action_erase_events(ACTION_PREFIX2+str(i))
-
-		var e=InputEventMouseButton.new()
-		e.button_index=BUTTON_LEFT if i==0 else BUTTON_RIGHT
-		InputMap.action_add_event(ACTION_PREFIX2+str(i),e)
+	connectButtons()
+	resetSkillRuntime()
+	call_deferred("initializeSkillsToPreventAstupidFuckingBugIDontKnowHowToFix")
 
 
-func createDefaultSlots()->void:
-	var keys=["F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","1","2","3","4","5","6","7","8","9","0","Q","E","R","T","F","G","Y","C","V","B"]
-	var base=grid.get_node("ButtonHolder0")
-
-	for i in range(1,30):
-		if grid.has_node("ButtonHolder"+str(i)):
-			continue
-
-		var b=base.duplicate()
-		b.name="ButtonHolder"+str(i)
-		grid.add_child(b)
-		b.owner=self
-
-		for c in b.get_children():
-			if c is TextureButton:
-				c.connect("pressed",self,"slotPressed",[b])
-				break
-
-	for i in range(30):
-		grid.get_node("ButtonHolder"+str(i)).get_node("Key").text=keys[i]
-
-
-func _physics_process(delta)->void:
-	updateCooldowns(delta)
-	if player.cursor_visible == false:
-		matchInputSlot()
-func setSlotVisible(holder,state:bool)->void:
-	holder.modulate.a=1.0 if state else 0.0
-	holder.mouse_filter=Control.MOUSE_FILTER_STOP if state else Control.MOUSE_FILTER_IGNORE
-func applyExpandState()->void:
-	for i in range(20):
-		if grid.has_node("ButtonHolder" + str(i)):
-			setSlotVisible(grid.get_node("ButtonHolder" + str(i)), true)
-	match expand_state:
-		1:
-			for i in range(10):
-				if grid.has_node("ButtonHolder" + str(i)):
-					setSlotVisible(grid.get_node("ButtonHolder" + str(i)), false)
-		2:
-			for i in range(20):
-				if grid.has_node("ButtonHolder" + str(i)):
-					setSlotVisible(grid.get_node("ButtonHolder" + str(i)), false)
-
-func expandCollapse()->void:
-	expand_state += 1
-	if expand_state > 2:
-		expand_state = 0
-	applyExpandState()
-	saveKeybinds()
-
-
-
-
-onready var skill_tree =   $"../SkillTreeRoot/SkillsTreeHolder"
-
-func skills(slot)->void:
-	# ==================================================
-	# CACHE REFERENCES
-	# ==================================================
-	var inventory_grid:GridContainer=$"../Inventory/ScrollContainer/GridContainer"
-	var stats=player.stats
-	var inventory=$"../Inventory"
-	var tween:Tween=$Tween
-
-	# invalid slot
-	if slot==null or slot.texture==null:
+func initializeSkillsToPreventAstupidFuckingBugIDontKnowHowToFix()->void:
+	if player == null or grid == null or grid2 == null:
 		return
 
-	var path=slot.texture.resource_path
+	var saved_cooldowns = {}
+	var save_path = "user://save/" + player.save_id + "/skill_cooldowns.save"
+	var file = File.new()
+	if file.file_exists(save_path):
+		if file.open(save_path,File.READ) == OK:
+			var data = file.get_var()
+			if data is Dictionary:
+				saved_cooldowns = data.duplicate(true)
+			file.close()
 
-	# ==================================================
-	# DETECT IF TEXTURE IS A SKILL OR AN ITEM
-	# ==================================================
-	var is_skill=false
-	for skill in PlayerSkills.skills:
-		if PlayerSkills.skills[skill]==slot.texture:
+	var energy_before = stats.energy
+	var health_before = stats.health
+
+	for _i in range(SKILL_INIT_PASSES):
+		for key in player.anim_locks.keys():
+			player.anim_locks[key] = true
+
+		for key in player.anim_locks.keys():
+			player.anim_locks[key] = false
+
+		for container in [grid,grid2]:
+			for holder in container.get_children():
+				var slot = holder.get_node("Slot")
+
+				if !slot.texture:
+					continue
+				var skill_data = getSkillData(slot)
+				if skill_data == null:
+					continue
+
+				if skill_data["skill_name"]=="combo attack":
+					continue
+
+				anim_calls.unlockAnim()
+				skills(slot)
+				reimburseSkill(skill_data["skill_name"])
+
+	active_cooldowns = saved_cooldowns.duplicate(true)
+	stats.energy = energy_before
+	stats.health = health_before
+	character_ui.updateBars()
+	
+func resetSkillRuntime():#initialization to prevent bugs where multiple inputs are possible at the start of the game 
+	active_cooldowns.clear()
+	continue_combo_atk = true
+	input_lock = false
+	input_lock_time = 0.0
+	player.current_skill = ""
+	for k in player.anim_locks.keys():
+		player.anim_locks[k] = false
+
+func consumeCombo():#called by the node AnimationCalls in animation call tracks for combo attack animations, enables queuing multiple base attacks 
+	if combo_queue > 0:
+		continue_combo_atk = true
+		combo_queue -= 1
+		
+
+
+var input_lock_time := 0.0
+var input_lock := false
+func _physics_process(delta):
+	updateCooldowns(delta)
+	input_lock_time -= delta
+	if input_lock_time <= 0:
+		input_lock = false
+	if player.cursor_visible == false:
+		matchInputSlot()
+		holdInputs()
+
+
+"""
+AnimationCalls.combo_atk()->void stops the combo attack animation by setting continue_combo_atk to false.
+While it is true, the combo attack animation continues playing. combo_atk splits the animation into multiple
+phases, making it a click-stop-click-stop input. When combo_atk_mode_hold is true, it always functions
+as hold-to-attack: release to stop, always.
+This saves time, by allowing the use of only one animation for the "combo attack" instead of splitting it into 
+multiple phases and having to blend them or needing to creat their own animation nodes in the AnimationBlendTree
+Call this for press-to-attack; otherwise, the player needs to hold the combo attack
+button to keep performing base attacks. There is a mode to switch between the two,
+but for players who want press-to-attack instead of hold-to-attack, this is required.
+
+Call this at the end of every hit in the combo attack animation, during the recovery frames.
+"""
+func holdInputs()->void:
+	for skill in hold_skills.keys():
+		if player.anim_locks.has(skill) and player.anim_locks[skill]:
+#__________________press to atk vs hold to atk for the base attack__________________________________
+			if skill=="combo attack" and combo_atk_mode_hold==false:
+				if continue_combo_atk:
+					continue
+					
+#___________________________________________________________________________________________________
+			var still_held:bool=false
+			if skill=="guard":
+				player.anim_locks["guard"]=true
+			for i in range(grid.get_child_count()):
+				var holder=grid.get_child(i)
+				var slot=holder.get_node("Slot")
+
+				if slot.texture and Skills.skills.has(skill):
+					if slot.texture==Skills.skills[skill]:
+						var action_name=ACTION_PREFIX+str(i)
+
+						if Input.is_action_pressed(action_name):
+							still_held=true
+
+						break
+
+			if !still_held:
+				for i in range(grid2.get_child_count()):
+					var holder=grid2.get_child(i)
+					var slot=holder.get_node("Slot")
+
+					if slot.texture and Skills.skills.has(skill):
+						if slot.texture==Skills.skills[skill]:
+							var action_name=ACTION_PREFIX2+str(i)
+
+							if Input.is_action_pressed(action_name):
+								still_held=true
+
+							break
+
+			if !still_held:
+				player.anim_locks[skill]=false
+
+				if player.current_skill==skill:
+					player.current_skill=""
+
+			chargeSkill(still_held,skill)
+
+
+
+var obl_color:=Color(1,1,1,1)
+var obl_slots=[]
+var obl_active:=false
+
+var obl_current_color:=Color(1,1,1,1)
+var obl_target_color:=Color(1,1,1,1)
+var obl_skill_slots:=[]
+var obl_is_active:=false
+
+
+var chargeSkillColors={}
+
+func updateChargeSkillColor(skill_name,max_stacks,color_points):
+	if !Skills.skills.has(skill_name):return
+
+	if !chargeSkillColors.has(skill_name):
+		chargeSkillColors[skill_name]={
+			"color":Color.white,
+			"slots":[]
+		}
+	var data=chargeSkillColors[skill_name]
+
+	if data.slots.empty():
+		for container in [grid,grid2]:
+			for holder in container.get_children():
+				var slot=holder.get_node("Slot")
+				if slot.texture==Skills.skills[skill_name]:
+					data.slots.append(slot)
+
+	var stacks=float(stats.charged_attack_stacks[skill_name]["stacks"])
+	var percent=clamp(stacks/max_stacks,0.0,1.0)
+
+	var point_count=color_points.size()-1
+	var segment=percent*point_count
+	var segment_index=int(floor(segment))
+	var segment_alpha=segment-segment_index
+
+	if segment_index>=point_count:
+		segment_index=point_count-1
+		segment_alpha=1.0
+
+	var start_color=color_points[segment_index]
+	var end_color=color_points[segment_index+1]
+
+	data.color=start_color.linear_interpolate(end_color,segment_alpha)
+
+	for slot in data.slots:
+		if is_instance_valid(slot):
+			slot.modulate=data.color
+
+func chargeSkill(still_held_state,skill_name):
+	player.is_in_combat=true
+	player.combat_timer=10
+	if skill_name!="obliteration charge":return
+
+	var skill_resource_path=Skills.skills[skill_name].resource_path
+	if active_cooldowns.has(skill_resource_path):return
+
+	updateChargeSkillColor("obliteration",100.0,[Color.white,Color(0,0.6,1),Color(0.6,0,0.8),Color(1,0,0)])
+
+	if !still_held_state:
+		if chargeSkillColors.has("obliteration"):
+			chargeSkillColors["obliteration"].color=Color.white
+
+			for slot in chargeSkillColors["obliteration"].slots:
+				if is_instance_valid(slot):
+					slot.modulate=Color.white
+
+		player.anim_locks["obliteration charge"]=false
+		player.anim_locks["obliteration"]=true
+		player.current_skill="obliteration"
+
+		var cooldown_value=Skills.getCooldown(skill_resource_path)
+		cooldown_value/=max(0.01,player.stats.derived_stats["cooldown_reduction"])
+		active_cooldowns[skill_resource_path]=cooldown_value
+		Skills.applyCooldownEffects(skill_name,active_cooldowns)
+		return
+
+	player.current_skill="obliteration"
+
+	if Engine.get_physics_frames()%40==0:
+		var energy_cost_value=Skills.getEnergyCost(skill_name)
+		var max_health_value=stats.max_health
+
+		if player.stats.energy>=energy_cost_value:
+			player.stats.energy-=energy_cost_value
+			stats.charged_attack_stacks["obliteration"]["stacks"]+=1
+		elif player.stats.health>max_health_value*0.5:
+			player.stats.health-=energy_cost_value
+			stats.charged_attack_stacks["obliteration"]["stacks"]+=2
+		else:
+			player.stats.health-=energy_cost_value*2
+			stats.charged_attack_stacks["obliteration"]["stacks"]+=5
+
+		character_ui.updateBars()
+
+
+
+func getChargeSkillStacks(path):
+	for skill_name in stats.charged_attack_stacks:
+		if Skills.skills.has(skill_name) and Skills.skills[skill_name].resource_path == path:
+			return int(stats.charged_attack_stacks[skill_name]["stacks"])
+	return -1
+
+func resetChargeSkillColor(skill_name):
+	if !chargeSkillColors.has(skill_name):
+		return
+
+	chargeSkillColors[skill_name].color=Color.white
+
+	for slot in chargeSkillColors[skill_name].slots:
+		if is_instance_valid(slot):
+			slot.modulate=Color.white
+
+
+
+
+var skill_data = {
+	"combo attack": {"path":"", "energy_cost":0, "slot":null}
+}
+
+func getSkillData(slot):
+	if slot == null or slot.texture == null: 
+		return null
+
+	var path = slot.texture.resource_path
+	var skill_name = ""
+
+	for s in Skills.skills:
+		if Skills.skills[s].resource_path == path:
+			skill_name = s
+			break
+
+	if skill_name == "":
+		return null
+
+	return {
+		"skill_name": skill_name,
+		"path": path,
+		"energy_cost": Skills.getEnergyCost(skill_name),
+		"slot": slot
+	}
+
+func skills(slot)->void:
+	player.is_in_combat=true
+	player.combat_timer=10
+
+	var data=getSkillData(slot)
+	var skill_name
+	if data != null:
+		skill_name=data.skill_name
+	if skill_name == "guard":
+		anim_calls.unlockAnim()
+		player.anim_locks["guard"] = true
+	if input_lock: return
+	if data==null: return
+
+	var path=data.path
+	var energy_cost=data.energy_cost
+	player.animation_tree.active = true
+	var is_hold=hold_skills.has(skill_name)
+	var is_combo=skill_name=="combo attack"
+	var is_exempt=is_combo or skill_name=="guard" or skill_name=="parry"
+
+
+	if player.anim_locks.get("stunned",false) or player.anim_locks.get("staggered",false):
+		return
+
+	var is_skill:=false
+	for s in Skills.skills:
+		if Skills.skills[s]==slot.texture:
 			is_skill=true
 			break
 
-	# ==================================================
-	# ITEM SECTION
-	# ==================================================
-	if !is_skill:
+	useItemFromKeyboard(is_skill,slot,path)
 
-		var holder=slot.get_parent()
-		var button=holder.get_node("TextureButton")
-
-		tween.stop_all()
-		tween.interpolate_property(slot,"rect_scale",Vector2.ONE,Vector2(.9,.9),.08,Tween.TRANS_QUAD,Tween.EASE_OUT)
-		tween.interpolate_property(slot,"rect_scale",Vector2(.9,.9),Vector2.ONE,.08,Tween.TRANS_QUAD,Tween.EASE_IN,.08)
-
-		if button.quantity<=0:
-			tween.interpolate_property(slot,"modulate",Color.white,Color(1,0,0),.08,Tween.TRANS_QUAD,Tween.EASE_OUT)
-			tween.interpolate_property(slot,"modulate",Color(1,0,0),Color.white,.15,Tween.TRANS_QUAD,Tween.EASE_IN,.08)
-			tween.start()
-			return
-
-		tween.interpolate_property(slot,"modulate",Color.white,Color(0,1,0),.08,Tween.TRANS_QUAD,Tween.EASE_OUT)
-		tween.interpolate_property(slot,"modulate",Color(0,1,0),Color.white,.15,Tween.TRANS_QUAD,Tween.EASE_IN,.08)
-		tween.start()
-
-		if CommonBehaviours.useItem(button,inventory_grid,stats):
-
-			button.quantity-=1
-
-			if button.quantity<=0:
-				button.quantity=0
-				slot.texture=null
-				button.item="null"
-
+	if !is_hold and !is_exempt and active_cooldowns.has(path):
 		return
 
-	# ==================================================
-	# SKILL SECTION
-	# ==================================================
+	var texture=Skills.skills[skill_name]
 
-	# skill already cooling down
-	if active_cooldowns.has(path):
+	var unlocked:=false
+	var stack=[$"../SkillTreeRoot"]
+
+	while stack.size()>0:
+		var node=stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+			if !(child is TextureButton): continue
+			if !child.has_node("Slot"): continue
+			var has_skill_level:=false
+			for prop in child.get_property_list():
+				if prop.name=="skill_level":
+					has_skill_level=true
+					break
+			if !has_skill_level: continue
+
+			var slot_node=child.get_node("Slot")
+			if slot_node.texture==texture and child.skill_level>0:
+				unlocked=true
+				break
+		if unlocked: break
+
+	if !unlocked: return
+
+	if !is_hold:
+		if player.anim_locks.get(skill_name,false): return
+
+	if not skill_name in Skills.chargeable_skills and energy_cost>0:
+		if stats.energy<energy_cost: return
+
+	if is_combo:
+		if combo_atk_mode_hold: continue_combo_atk=true
+		else: continue_combo_atk=true
+
+	delayedSkill(skill_name,path,energy_cost,slot)
+	
+	
+var skill_delay_busy:=false
+func delayedSkill(skill_name,path,energy_cost,slot):
+	if player.current_skill!="" and player.current_skill!="none":
+		var l:=false
+		for k in player.anim_locks:
+			if player.anim_locks[k]:l=true;break
+		if l:yield(get_tree().create_timer(0.15),"timeout")
+	applySkill(skill_name,path,energy_cost,slot)
+	
+	
+func applySkill(skill_name,path,energy_cost,slot):
+	if active_cooldowns.has(path) and skill_name!="combo attack":return
+	if player.current_skill=="obliteration" or player.current_skill=="obliteration charge":
+		resetChargeSkillColor("obliteration")
+	if skill_name!="combo attack":
+		player.unlockAnim()
+		anim_calls.unlockAnim()
+
+	player.flip_blend_timer=0.0
+	player.dodge_cleanup_timer=0.0
+	player.dodge_cleanup_reset=false
+	player.anim_locks[skill_name]=true
+	player.current_skill=skill_name
+	player.combat_timer=10
+	applyCooldownAndCost(skill_name,path,energy_cost)
+	tweenSkillIcons(skill_name,slot)
+
+
+
+func applyCooldownAndCost(skill_name,path,energy_cost)->void:
+	if player == null:
 		return
+	var cooldown = Skills.getCooldown(path)
+	var stats = $"../../Stats"
+	cooldown /= max(0.01, stats.derived_stats["cooldown_reduction"])
 
-	for skill in PlayerSkills.skills:
-
-		var texture=PlayerSkills.skills[skill]
-
-		# wrong skill
-		if path!=texture.resource_path:
-			continue
-
-		# not unlocked
-		if !skill_tree.skills.has(skill) or skill_tree.skills[skill]<=0:
-			return
-		# --------------------------------------------------
-		# RESOURCE COST CHECK
-		# --------------------------------------------------
-		var energy_cost=PlayerSkills.getEnergyCost(skill)
-
-		if energy_cost>0:
-
-			# insufficient energy
-			if player.stats.energy<energy_cost:
-				return
-
-			# spend energy
-			player.stats.energy-=energy_cost
-			character_ui.updateBars()
-
-		# --------------------------------------------------
-		# CLICK ANIMATION
-		# --------------------------------------------------
-		if !no_press_tween_skills.has(skill):
-			tween.stop_all()
-			tween.interpolate_property(slot,"rect_scale",Vector2.ONE,Vector2(.9,.9),.08,Tween.TRANS_QUAD,Tween.EASE_OUT)
-			tween.interpolate_property(slot,"rect_scale",Vector2(.9,.9),Vector2.ONE,.08,Tween.TRANS_QUAD,Tween.EASE_IN,.08)
-			tween.start()
-
-		# --------------------------------------------------
-		# TRIGGER SKILL
-		# --------------------------------------------------
-		# base attack can NEVER interrupt anything
-		if skill=="base attack":
-			for k in player.anim_locks:
-				if k!="base attack" and player.anim_locks[k]:
-					return
-		else:
-			# any skill can interrupt base attack
-			player.anim_locks["base attack"]=false
-		
-		animationcalls.unlockAnim()
-		player.anim_locks[skill]=true
-		player.current_skill=skill
-		player.combat_timer = 10
-
-		# --------------------------------------------------
-		# APPLY COOLDOWN
-		# --------------------------------------------------
-
-		var cooldown=PlayerSkills.getCooldown(path)
-		cooldown/=max(.01,player.stats.derived_stats["cooldown_reduction"])
+	if skill_name!="obliteration charge" and !hold_skills.has(skill_name):
 		active_cooldowns[path]=cooldown
-		return
+		Skills.applyCooldownEffects(skill_name,active_cooldowns)
 
-
+		if energy_cost > 0:
+			stats.energy -= energy_cost
+			character_ui.updateBars()
 
 
 func reimburseSkill(skill_name:String)->void:
-	if !PlayerSkills.skills.has(skill_name):
+	if !Skills.skills.has(skill_name):
 		return
 
-	var texture=PlayerSkills.skills[skill_name]
+	var texture=Skills.skills[skill_name]
 	var path=texture.resource_path
 
-	var energy_cost=PlayerSkills.getEnergyCost(skill_name)
+	var energy_cost=Skills.getEnergyCost(skill_name)
 
-	if energy_cost > 0:
-		player.stats.energy += energy_cost
+	if energy_cost>0:
+		player.stats.energy+=energy_cost
 		character_ui.updateBars()
 
 	if active_cooldowns.has(path):
 		active_cooldowns.erase(path)
 
 
+func useItemFromKeyboard(is_skill,slot,path)->void:
+	if !is_skill:
+		var holder = slot.get_parent()
+		var button = holder.get_node("TextureButton")
+
+		if active_cooldowns.has(path):
+			return
+
+		tween.stop_all()
+
+		tween.interpolate_property(slot, "rect_scale",Vector2.ONE, Vector2(0.9, 0.9),0.08, Tween.TRANS_QUAD, Tween.EASE_OUT)
+
+		tween.interpolate_property(slot, "rect_scale",Vector2(0.9, 0.9), Vector2.ONE,0.08, Tween.TRANS_QUAD, Tween.EASE_IN, 0.08)
+
+		if button.quantity <= 0:
+			tween.interpolate_property(slot, "modulate",Color.white, Color(1, 0, 0),0.08, Tween.TRANS_QUAD, Tween.EASE_OUT)
+
+			tween.interpolate_property(slot, "modulate",Color(1, 0, 0), Color.white,0.15, Tween.TRANS_QUAD, Tween.EASE_IN, 0.08)
+
+			tween.start()
+			return
+
+		tween.interpolate_property(slot, "modulate",Color.white, Color(0, 1, 0),0.08, Tween.TRANS_QUAD, Tween.EASE_OUT)
+
+		tween.interpolate_property(slot, "modulate",Color(0, 1, 0), Color.white,0.15, Tween.TRANS_QUAD, Tween.EASE_IN, 0.08)
+
+		tween.start()
+
+		if CommonBehaviours.useItem(button, inventory_grid, stats):
+			var cooldown = Items.getCooldown(path)
+
+			if cooldown > 0.0:
+				active_cooldowns[path] = cooldown
+
+			button.quantity -= 1
+
+			if button.quantity <= 0:
+				button.quantity = 0
+				slot.texture = null
+				button.item = "null"
+func tweenSkillIcons(skill_name,slot)->void:
+	if !no_press_tween_skills.has(skill_name):
+		tween.stop_all()
+		tween.interpolate_property(slot, "rect_scale",Vector2.ONE, Vector2(0.9, 0.9),0.08, Tween.TRANS_QUAD, Tween.EASE_OUT)
+		tween.interpolate_property(slot, "rect_scale",Vector2(0.9, 0.9), Vector2.ONE,0.08, Tween.TRANS_QUAD, Tween.EASE_IN, 0.08)
+		tween.start()
+
+func resetTween(slot)->void:
+	if slot.texture == null:
+		return
+
+	var path = slot.texture.resource_path
+
+	# no cooldown defined or explicitly zero -> ignore
+	if !Skills.cooldowns.has(path):
+		return
+	if Skills.cooldowns[path] <= 0.0:
+		return
+
+	var t:Tween = tween2
+	t.stop_all()
+	slot.modulate = Color.white
+
+	t.interpolate_property(slot,"modulate",Color.white,Color(0.5,0.8,1.4,1),0.12,Tween.TRANS_QUAD,Tween.EASE_OUT)
+	t.interpolate_property(slot,"modulate",Color(0.5,0.8,1.4,1),Color.white,0.20,Tween.TRANS_QUAD,Tween.EASE_IN,0.12)
+
+	t.start()
 
 
-func updateCooldowns(delta)->void:
-	var processed={}
+func updateCooldowns(delta):# I suspect this funciton is called twice somewhere and I can't find where, momentary solution, divide delta by 2 
+	for key in active_cooldowns.keys():
+		active_cooldowns[key]=max(active_cooldowns[key]-delta *0.5 ,0.0)
 
+	inventory.inventoryCooldowns(delta)
 	for container in [grid,grid2]:
 		for holder in container.get_children():
+			var icon=holder.get_node("Slot")
+			var label=holder.get_node("CD")
 
-			var slot=holder.get_node("Slot")
-			var cd=holder.get_node("CD")
-
-			if slot.texture==null:
-				cd.text=""
+			if !icon.texture:
+				label.text=""
 				continue
 
-			var path=slot.texture.resource_path
+			var key=icon.texture.resource_path
+			var stacks=getChargeSkillStacks(key)
 
-			if active_cooldowns.has(path):
+			if stacks>0 and player.current_skill=="obliteration":
+				label.text=str(stacks)
+				continue
 
-				if !processed.has(path):
-					active_cooldowns[path]-=delta
-					processed[path]=true
+			var has_skill_cd=Skills.cooldowns.has(key) and Skills.cooldowns[key]>0.0
 
-				cd.text=str(int(ceil(max(active_cooldowns[path],0))))
+			if !has_skill_cd:
+				label.text=""
+				continue
 
-				if active_cooldowns[path]<=0:
-					active_cooldowns.erase(path)
-					cd.text=""
-			else:
-				cd.text=""
+			if !active_cooldowns.has(key):
+				label.text=""
+				continue
+
+			var t=active_cooldowns[key]
+			label.text=str(int(ceil(max(t,0))))
+			if t<=0:
+				active_cooldowns.erase(key)
+
+	for holder in inventory_grid.get_children():
+		var icon=holder.get_node("Slot")
+		var label=holder.get_node("CD")
+
+		if !icon.texture:
+			label.text=""
+			continue
+
+		var key=icon.texture.resource_path
+		if !active_cooldowns.has(key):
+			label.text=""
+			continue
+
+		var t=active_cooldowns[key]
+		label.text=str(int(ceil(max(t,0))))
+		if t<=0:
+			active_cooldowns.erase(key)
 
 
-
-
-func matchInputSlot()->void:#calls skills based on slot and assigned key
+func matchInputSlot()->void:
 	for i in range(grid.get_child_count()):
-		var holder=grid.get_child(i)
-		var action_name=ACTION_PREFIX+str(i)
-		if Input.is_action_just_pressed(action_name):
-			skills(holder.get_node("Slot"))
+		var a=ACTION_PREFIX+str(i)
+		if Input.is_action_just_pressed(a):
+			var slot=grid.get_child(i).get_node("Slot")
+			if slot.texture == Skills.skills["combo attack"] and !combo_atk_mode_hold:
+				if continue_combo_atk == true:
+					combo_queue = min(combo_queue + 1, COMBO_QUEUE_MAX)
+			skills(slot)
+			return
+
 	for i in range(grid2.get_child_count()):
-		var holder=grid2.get_child(i)
-		var action_name=ACTION_PREFIX2+str(i)
-		if !mouse_repeat_counter.has(action_name):
-			mouse_repeat_counter[action_name]=0
-		if Input.is_action_just_pressed(action_name):
-			skills(holder.get_node("Slot"))
-			mouse_repeat_counter[action_name]=0
-		elif Input.is_action_pressed(action_name):
-			mouse_repeat_counter[action_name]+=1
-			if mouse_repeat_counter[action_name]>=mouse_repeat_frames:
-				skills(holder.get_node("Slot"))
-				mouse_repeat_counter[action_name]=0
-		else:
-			mouse_repeat_counter[action_name]=0
-
-
+		var a=ACTION_PREFIX2+str(i)
+		if Input.is_action_just_pressed(a):
+			var slot=grid2.get_child(i).get_node("Slot")
+			if slot.texture == Skills.skills["combo attack"] and !combo_atk_mode_hold:
+				if continue_combo_atk == true:
+					combo_queue = min(combo_queue + 1, COMBO_QUEUE_MAX)
+			skills(slot)
+			return
 
 
 func slotPressed(holder)->void:
@@ -449,89 +725,118 @@ func saveKeybinds()->void:
 				break
 		config.set_value("MouseKeys","slot_"+str(i),button)
 	config.set_value("UI","expand_state",expand_state)
+	config.set_value("UI","combo_atk_mode_hold",combo_atk_mode_hold)
 	config.save(CONFIG_FILE_PATH)
 
 
 func loadKeybinds()->void:
-	var config=ConfigFile.new()
-	var has_save=config.load(CONFIG_FILE_PATH)==OK
+	var config = ConfigFile.new()
+	var has_keybinds = config.load(CONFIG_FILE_PATH) == OK
 
 	createDefaultSlots()
 	createDefaultMouseSlots()
 
-	if has_save:
-		expand_state=config.get_value("UI","expand_state",0)
+	# --------------------------------------------------
+	# CHECK IF THIS CHARACTER ALREADY HAS A SAVE
+	# --------------------------------------------------
+	var has_character_save := false
 
+	if player.save_id != "":
+		var dir = Directory.new()
+		var save_dir = "user://save/" + player.save_id
+
+		if dir.dir_exists(save_dir):
+			has_character_save = true
+
+	# --------------------------------------------------
+	# DEFAULT MOUSE SKILLS ONLY FOR BRAND-NEW CHARACTERS
+	# --------------------------------------------------
+	if !has_character_save:
+		var left_slot = grid2.get_node("ButtonHolder0").get_node("Slot")
+		var right_slot = grid2.get_node("ButtonHolder1").get_node("Slot")
+
+		if left_slot.texture == null and Skills.skills.has("combo attack"):
+			left_slot.texture = Skills.skills["combo attack"]
+
+		if right_slot.texture == null and Skills.skills.has("guard"):
+			right_slot.texture = Skills.skills["guard"]
+
+	if has_keybinds:
+		expand_state = config.get_value("UI", "expand_state", 0)
+		combo_atk_mode_hold = config.get_value("UI", "combo_atk_mode_hold", false)
+
+	# --------------------------------------------------
+	# KEYBOARD SLOTS
+	# --------------------------------------------------
 	for i in range(grid.get_child_count()):
-		var holder=grid.get_child(i)
-		var key=holder.get_node("Key")
-		var action_name=ACTION_PREFIX+str(i)
+		var holder = grid.get_child(i)
+		var key = holder.get_node("Key")
+		var action_name = ACTION_PREFIX + str(i)
 
 		if !InputMap.has_action(action_name):
 			InputMap.add_action(action_name)
 
 		InputMap.action_erase_events(action_name)
 
-		var scancode=-1
+		var scancode = -1
 
-		if has_save:
-			scancode=config.get_value("Keys","slot_"+str(i),-1)
+		if has_keybinds:
+			scancode = config.get_value("Keys", "slot_" + str(i), -1)
 
-		if scancode==-1:
-			scancode=getScancode(key.text)
+		if scancode == -1:
+			scancode = getScancode(key.text)
 
-		if scancode>0:
-			var e=InputEventKey.new()
-			e.scancode=scancode
-			InputMap.action_add_event(action_name,e)
+		if scancode > 0:
+			var e = InputEventKey.new()
+			e.scancode = scancode
+			InputMap.action_add_event(action_name, e)
 
-			var s=InputEventKey.new()
-			s.scancode=scancode
-			s.shift=true
-			InputMap.action_add_event(action_name,s)
+			var s = InputEventKey.new()
+			s.scancode = scancode
+			s.shift = true
+			InputMap.action_add_event(action_name, s)
 
-			key.text=OS.get_scancode_string(scancode).to_upper()
+			key.text = OS.get_scancode_string(scancode).to_upper()
 
+	# --------------------------------------------------
+	# MOUSE SLOTS
+	# --------------------------------------------------
 	for i in range(grid2.get_child_count()):
-		var holder=grid2.get_child(i)
-		var key=holder.get_node("Key")
-		var action_name=ACTION_PREFIX2+str(i)
+		var holder = grid2.get_child(i)
+		var key = holder.get_node("Key")
+		var action_name = ACTION_PREFIX2 + str(i)
 
 		if !InputMap.has_action(action_name):
 			InputMap.add_action(action_name)
 
 		InputMap.action_erase_events(action_name)
 
-		var button_index=-1
+		var button_index = -1
 
-		if has_save:
-			button_index=config.get_value("MouseKeys","slot_"+str(i),-1)
+		if has_keybinds:
+			button_index = config.get_value("MouseKeys", "slot_" + str(i), -1)
 
-		if button_index==-1:
-			if i==0:
-				button_index=BUTTON_LEFT
-			else:
-				button_index=BUTTON_RIGHT
+		if button_index == -1:
+			button_index = BUTTON_LEFT if i == 0 else BUTTON_RIGHT
 
-		var e=InputEventMouseButton.new()
-		e.button_index=button_index
-		InputMap.action_add_event(action_name,e)
+		var e = InputEventMouseButton.new()
+		e.button_index = button_index
+		InputMap.action_add_event(action_name, e)
 
 		match button_index:
 			BUTTON_LEFT:
-				key.text="LM"
+				key.text = "LM"
 			BUTTON_RIGHT:
-				key.text="RM"
+				key.text = "RM"
 			BUTTON_MIDDLE:
-				key.text="MM"
+				key.text = "MM"
 			_:
-				key.text="M"+str(button_index)
+				key.text = "M" + str(button_index)
 
 	applyExpandState()
 
-	if !has_save:
+	if !has_keybinds:
 		saveKeybinds()
-
 
 func getSlotIndex(slot)->int:
 	for i in range(grid.get_child_count()):
@@ -561,3 +866,104 @@ func loadCooldowns()->void:
 			file.close()
 func _on_Button_pressed()->void:
 	edit = !edit
+
+
+func _on_ComboModeButton_pressed():
+	combo_atk_mode_hold = !combo_atk_mode_hold
+
+func createDefaultMouseSlots()->void:
+	var keys=["LM","RM"]
+	var base=grid2.get_node("ButtonHolder0")
+
+	for i in range(1,2):
+		if grid2.has_node("ButtonHolder"+str(i)):
+			continue
+
+		var b=base.duplicate()
+		b.name="ButtonHolder"+str(i)
+		grid2.add_child(b)
+		b.owner=self
+
+		for c in b.get_children():
+			if c is TextureButton:
+				c.connect("pressed",self,"slotPressed",[b])
+				break
+
+	for i in range(2):
+		var b=grid2.get_node("ButtonHolder"+str(i))
+
+		b.get_node("Key").text=keys[i]
+
+		if !InputMap.has_action(ACTION_PREFIX2+str(i)):
+			InputMap.add_action(ACTION_PREFIX2+str(i))
+
+		InputMap.action_erase_events(ACTION_PREFIX2+str(i))
+
+		var e=InputEventMouseButton.new()
+		e.button_index=BUTTON_LEFT if i==0 else BUTTON_RIGHT
+		InputMap.action_add_event(ACTION_PREFIX2+str(i),e)
+
+
+func createDefaultSlots()->void:
+	var keys=["F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","Q","E","R","T","F","G","Y","C","V","B","1","2","3","4","5","6","7","8","9","0"]
+	var base=grid.get_node("ButtonHolder0")
+
+	for i in range(1,30):
+		if grid.has_node("ButtonHolder"+str(i)):
+			continue
+
+		var b=base.duplicate()
+		b.name="ButtonHolder"+str(i)
+		grid.add_child(b)
+		b.owner=self
+
+		for c in b.get_children():
+			if c is TextureButton:
+				c.connect("pressed",self,"slotPressed",[b])
+				break
+
+	for i in range(30):
+		grid.get_node("ButtonHolder"+str(i)).get_node("Key").text=keys[i]
+
+
+
+
+func setSlotVisible(holder,state:bool)->void:
+	holder.modulate.a=1.0 if state else 0.0
+	holder.mouse_filter=Control.MOUSE_FILTER_STOP if state else Control.MOUSE_FILTER_IGNORE
+	
+func expandCollapse()->void:
+	expand_state += 1
+	if expand_state > 2:
+		expand_state = 0
+	applyExpandState()
+	saveKeybinds()
+func connectButtons()->void:
+	for holder in grid.get_children():
+		for c in holder.get_children():
+			if c is TextureButton:
+				c.connect("pressed",self,"slotPressed",[holder])
+				break
+
+	for holder in grid2.get_children():
+		for c in holder.get_children():
+			if c is TextureButton:
+				c.connect("pressed",self,"slotPressed",[holder])
+				break
+
+	expand_button.connect("pressed",self,"expandCollapse")
+	
+func applyExpandState()->void:
+	for i in range(20):
+		if grid.has_node("ButtonHolder" + str(i)):
+			setSlotVisible(grid.get_node("ButtonHolder" + str(i)), true)
+	match expand_state:
+		1:
+			for i in range(10):
+				if grid.has_node("ButtonHolder" + str(i)):
+					setSlotVisible(grid.get_node("ButtonHolder" + str(i)), false)
+		2:
+			for i in range(20):
+				if grid.has_node("ButtonHolder" + str(i)):
+					setSlotVisible(grid.get_node("ButtonHolder" + str(i)), false)
+
